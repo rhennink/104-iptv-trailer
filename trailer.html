@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<!-- Trailer relay for 104 IPTV: YouTube refuses embeds without a web origin (error 153),
+     so the TV app loads this hosted page, which embeds the player and relays commands/status. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>104 IPTV trailer</title>
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+iframe { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<script>
+(function () {
+    var m = /[?&]v=([A-Za-z0-9_-]{11})/.exec(location.search);
+    if (!m) { return; }
+    var f = document.createElement('iframe');
+    f.setAttribute('allow', 'autoplay; encrypted-media');
+    f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    f.src = 'https://www.youtube.com/embed/' + m[1] + '?autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
+    document.body.appendChild(f);
+
+    function toPlayer(o) { try { f.contentWindow.postMessage(JSON.stringify(o), '*'); } catch (e) { } }
+    function toApp(o) { try { parent.postMessage(JSON.stringify(o), '*'); } catch (e) { } }
+
+    // ask the player for events until it answers (a TV can take a while to start it)
+    var heard = false, n = 0;
+    var t = setInterval(function () { if (heard || ++n > 60) { clearInterval(t); return; } toPlayer({ event: 'listening', id: 1, channel: 'widget' }); }, 500);
+    toApp({ trailer: 'boot' });
+    var lastState = null;
+    window.addEventListener('message', function (e) {
+        var d;
+        try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch (x) { return; }
+        if (!d) { return; }
+        if (d.event && d.channel === 'widget') {
+            if (!heard) { heard = true; toApp({ trailer: 'ready' }); }
+            if (d.event === 'infoDelivery' && d.info && typeof d.info.playerState === 'number') {
+                if (d.info.playerState === lastState) { return; }
+                lastState = d.info.playerState;
+            }
+            // player -> app: ready / state / error
+            if (d.event === 'onReady') { toApp({ trailer: 'ready' }); }
+            else if (d.event === 'onError') { toApp({ trailer: 'error', code: d.info }); }
+            else if (d.event === 'onStateChange') { toApp({ trailer: 'state', state: d.info }); }
+            else if (d.event === 'infoDelivery' && d.info && typeof d.info.playerState === 'number') { toApp({ trailer: 'state', state: d.info.playerState }); }
+        } else if (d.cmd) {
+            // app -> player: pauseVideo / playVideo
+            toPlayer({ event: 'command', func: d.cmd, args: [] });
+        }
+    });
+})();
+</script>
+</body>
+</html>
